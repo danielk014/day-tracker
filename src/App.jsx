@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { initStorage, migrateLocalToSupabase, pullFromSupabase } from './storage';
 import AuthScreen from './AuthScreen';
 import DailyView from './DailyView';
 import CalendarView from './CalendarView';
@@ -12,6 +13,8 @@ const TABS = ['Today', 'Calendar', 'Goals', 'Projects', 'Coach'];
 
 function App() {
   const [session, setSession] = useState(undefined);
+  const [dataReady, setDataReady] = useState(false);
+  const [dataKey, setDataKey] = useState(0);
   const [tab, setTab] = useState('Today');
   const [selectedDate, setSelectedDate] = useState(null);
 
@@ -22,13 +25,30 @@ function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (!session) setDataReady(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    (async () => {
+      initStorage(session.user.id);
+      await migrateLocalToSupabase();
+      await pullFromSupabase();
+      if (!cancelled) {
+        setDataReady(true);
+        setDataKey(k => k + 1);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session]);
+
   if (session === undefined) return null;
   if (!session) return <AuthScreen />;
+  if (!dataReady) return null;
 
   function handleDaySelect(date) {
     setSelectedDate(date);
@@ -61,7 +81,7 @@ function App() {
         ))}
       </nav>
 
-      <main className="content">
+      <main className="content" key={dataKey}>
         {tab === 'Today' && <DailyView overrideDate={selectedDate} />}
         {tab === 'Calendar' && <CalendarView onDaySelect={handleDaySelect} />}
         {tab === 'Goals' && <GoalsView />}

@@ -1,3 +1,5 @@
+import { supabase } from './supabaseClient';
+
 const LOGS_KEY = 'daily-tracker-logs';
 const GOALS_KEY = 'daily-tracker-goals';
 const LONG_TERM_GOALS_KEY = 'daily-tracker-long-term-goals';
@@ -6,6 +8,46 @@ const BOARD_KEY = 'daily-tracker-board';
 const DAILY_TASKS_KEY = 'daily-tracker-daily-tasks';
 const RECURRING_TASKS_KEY = 'daily-tracker-recurring-tasks';
 const BLOCKS_KEY = 'daily-tracker-blocks';
+
+// Maps localStorage keys to Supabase data_type identifiers
+const KEY_TO_TYPE = {
+  [LOGS_KEY]: 'logs',
+  [GOALS_KEY]: 'goals',
+  [LONG_TERM_GOALS_KEY]: 'long_term_goals',
+  [PROJECTS_KEY]: 'projects',
+  [BOARD_KEY]: 'board',
+  [DAILY_TASKS_KEY]: 'daily_tasks',
+  [RECURRING_TASKS_KEY]: 'recurring_tasks',
+  [BLOCKS_KEY]: 'blocks',
+};
+
+let _userId = null;
+const _debounceTimers = {};
+
+function syncToSupabase(localStorageKey) {
+  if (!_userId) return;
+  const dataType = KEY_TO_TYPE[localStorageKey];
+  if (!dataType) return;
+
+  clearTimeout(_debounceTimers[dataType]);
+  _debounceTimers[dataType] = setTimeout(async () => {
+    try {
+      const raw = localStorage.getItem(localStorageKey);
+      const data = raw ? JSON.parse(raw) : {};
+      const { error } = await supabase.from('user_data').upsert(
+        { user_id: _userId, data_type: dataType, data, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,data_type' }
+      );
+      if (error) {
+        console.error(`Supabase sync error for ${dataType}:`, error.message, error);
+      }
+    } catch (err) {
+      console.error(`Supabase sync exception for ${dataType}:`, err);
+    }
+  }, 500);
+}
+
+// --- Public API (signatures unchanged) ---
 
 export function getDateStr(date = new Date()) {
   return date.toISOString().slice(0, 10);
@@ -21,6 +63,7 @@ export function loadLogs() {
 
 export function saveLogs(logs) {
   localStorage.setItem(LOGS_KEY, JSON.stringify(logs));
+  syncToSupabase(LOGS_KEY);
 }
 
 export function getHourLog(date, hour) {
@@ -46,6 +89,7 @@ export function loadGoals() {
 
 export function saveGoals(goals) {
   localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+  syncToSupabase(GOALS_KEY);
 }
 
 export function loadLongTermGoals() {
@@ -58,6 +102,7 @@ export function loadLongTermGoals() {
 
 export function saveLongTermGoals(goals) {
   localStorage.setItem(LONG_TERM_GOALS_KEY, JSON.stringify(goals));
+  syncToSupabase(LONG_TERM_GOALS_KEY);
 }
 
 export function loadProjects() {
@@ -70,6 +115,7 @@ export function loadProjects() {
 
 export function saveProjects(projects) {
   localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+  syncToSupabase(PROJECTS_KEY);
 }
 
 export function loadBoard() {
@@ -82,6 +128,7 @@ export function loadBoard() {
 
 export function saveBoard(board) {
   localStorage.setItem(BOARD_KEY, JSON.stringify(board));
+  syncToSupabase(BOARD_KEY);
 }
 
 export function loadDailyTasks(date) {
@@ -103,6 +150,7 @@ export function saveDailyTasks(date, tasks) {
     obj[date] = tasks;
     localStorage.setItem(DAILY_TASKS_KEY, JSON.stringify(obj));
   }
+  syncToSupabase(DAILY_TASKS_KEY);
 }
 
 export function loadRecurringTasks() {
@@ -115,6 +163,7 @@ export function loadRecurringTasks() {
 
 export function saveRecurringTasks(tasks) {
   localStorage.setItem(RECURRING_TASKS_KEY, JSON.stringify(tasks));
+  syncToSupabase(RECURRING_TASKS_KEY);
 }
 
 export function loadBlocks(date) {
@@ -136,6 +185,7 @@ export function saveBlocks(date, blocks) {
     obj[date] = blocks;
     localStorage.setItem(BLOCKS_KEY, JSON.stringify(obj));
   }
+  syncToSupabase(BLOCKS_KEY);
 }
 
 export function loadAllBlocks() {
@@ -189,4 +239,74 @@ export function getDayStats(date) {
     logged,
     avgEnergy: energyCount > 0 ? (totalEnergy / energyCount).toFixed(1) : 0
   };
+}
+
+// --- Supabase sync helpers ---
+
+const TYPE_TO_KEY = Object.fromEntries(
+  Object.entries(KEY_TO_TYPE).map(([k, v]) => [v, k])
+);
+
+export function initStorage(userId) {
+  _userId = userId;
+}
+
+export async function pullFromSupabase() {
+  if (!_userId) return;
+  const { data, error } = await supabase
+    .from('user_data')
+    .select('data_type, data')
+    .eq('user_id', _userId);
+  if (error) {
+    console.error('pullFromSupabase failed:', error);
+    return;
+  }
+  for (const row of data) {
+    const localKey = TYPE_TO_KEY[row.data_type];
+    if (localKey) {
+      localStorage.setItem(localKey, JSON.stringify(row.data));
+    }
+  }
+}
+
+export async function migrateLocalToSupabase() {
+  if (!_userId) return;
+  // Check if user already has any data on the server
+  const { data: existing, error } = await supabase
+    .from('user_data')
+    .select('data_type')
+    .eq('user_id', _userId)
+    .limit(1);
+  if (error) {
+    console.error('migrateLocalToSupabase check failed:', error);
+    return;
+  }
+  // If server already has data, skip migration
+  if (existing && existing.length > 0) return;
+
+  // Push all non-empty localStorage data to Supabase
+  const rows = [];
+  for (const [localKey, dataType] of Object.entries(KEY_TO_TYPE)) {
+    const raw = localStorage.getItem(localKey);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      // Skip empty objects/arrays
+      const isEmpty = Array.isArray(parsed) ? parsed.length === 0 : Object.keys(parsed).length === 0;
+      if (isEmpty) continue;
+      rows.push({
+        user_id: _userId,
+        data_type: dataType,
+        data: parsed,
+        updated_at: new Date().toISOString(),
+      });
+    } catch {
+      // skip unparseable
+    }
+  }
+  if (rows.length === 0) return;
+  const { error: insertErr } = await supabase.from('user_data').insert(rows);
+  if (insertErr) {
+    console.error('migrateLocalToSupabase insert failed:', insertErr);
+  }
 }
