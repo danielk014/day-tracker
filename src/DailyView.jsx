@@ -11,12 +11,20 @@ const TASK_COLORS = ['#1a1a1a', '#d4edda', '#cce5ff', '#fff3cd', '#f8d7da', '#e2
 const BLOCK_COLORS = ['#4a6cf7', '#22c55e', '#f7c948', '#ef4444', '#a855f7', '#f97316'];
 const ACTUAL_COLOR = '#374151';
 const ROW_HEIGHT = 48;
+const LONG_PRESS_MS = 300;
 
 function formatHour(h) {
   if (h === 0) return '12 AM';
   if (h < 12) return `${h} AM`;
   if (h === 12) return '12 PM';
   return `${h - 12} PM`;
+}
+
+// Get clientY from mouse or touch event
+function getY(e) {
+  if (e.touches && e.touches.length > 0) return e.touches[0].clientY;
+  if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientY;
+  return e.clientY;
 }
 
 function DailyView({ overrideDate }) {
@@ -29,14 +37,24 @@ function DailyView({ overrideDate }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskColor, setNewTaskColor] = useState(TASK_COLORS[0]);
   const [newTaskRecurring, setNewTaskRecurring] = useState(false);
-  const [draggingTask, setDraggingTask] = useState(null);
-  const [dropHour, setDropHour] = useState(null);
   const [editingBlock, setEditingBlock] = useState(null);
   const [addingAtHour, setAddingAtHour] = useState(null);
   const [newBlockText, setNewBlockText] = useState('');
+
+  // Touch/drag state
+  const [touchDraggingTask, setTouchDraggingTask] = useState(null);
+  const [touchDragHour, setTouchDragHour] = useState(null);
+  const [ghostPos, setGhostPos] = useState(null);
+  // For HTML5 drag (desktop)
+  const [draggingTask, setDraggingTask] = useState(null);
+  const [dropHour, setDropHour] = useState(null);
+
   const currentRef = useRef(null);
   const taskInputRef = useRef(null);
   const blockInputRef = useRef(null);
+  const scheduleRef = useRef(null);
+  const longPressTimer = useRef(null);
+  const touchStartPos = useRef(null);
 
   useEffect(() => {
     if (overrideDate) setDate(overrideDate);
@@ -123,7 +141,7 @@ function DailyView({ overrideDate }) {
     }
   }
 
-  // Block functions — ALL schedule items are blocks now
+  // Block functions
   function updateBlocks(newBlocks) {
     setBlocks(newBlocks);
     saveBlocks(date, newBlocks);
@@ -134,9 +152,8 @@ function DailyView({ overrideDate }) {
     setEditingBlock(null);
   }
 
-  // Click on empty hour -> add a block directly
   function handleHourClick(hour) {
-    // Don't open if there's already a block covering this hour
+    if (touchDraggingTask) return;
     const hasBlock = blocks.some(b => hour >= b.startHour && hour < b.endHour);
     if (hasBlock) return;
     setAddingAtHour(hour);
@@ -146,7 +163,6 @@ function DailyView({ overrideDate }) {
 
   function addBlockAtHour() {
     if (!newBlockText.trim() || addingAtHour === null) return;
-    const colorIdx = blocks.length % BLOCK_COLORS.length;
     const newBlock = {
       id: Date.now(),
       text: newBlockText.trim(),
@@ -160,7 +176,80 @@ function DailyView({ overrideDate }) {
     setNewBlockText('');
   }
 
-  // Drag task onto schedule -> create block
+  function dropTaskAtHour(task, hour) {
+    const colorIdx = blocks.length % BLOCK_COLORS.length;
+    const newBlock = {
+      id: Date.now(),
+      text: task.text,
+      startHour: hour,
+      endHour: Math.min(hour + 1, 24),
+      color: task.color && task.color !== '#1a1a1a'
+        ? task.color
+        : BLOCK_COLORS[colorIdx],
+      type: 'planned',
+    };
+    updateBlocks([...blocks, newBlock]);
+  }
+
+  // Helper: get hour from a Y coordinate over the schedule grid
+  function getHourFromY(clientY) {
+    if (!scheduleRef.current) return null;
+    const rect = scheduleRef.current.getBoundingClientRect();
+    const y = clientY - rect.top + scheduleRef.current.scrollTop;
+    const hour = Math.floor(y / ROW_HEIGHT);
+    return Math.max(0, Math.min(23, hour));
+  }
+
+  // === TOUCH DRAG: tasks onto schedule ===
+  function handleTaskTouchStart(e, task) {
+    const y = getY(e);
+    const x = e.touches[0].clientX;
+    touchStartPos.current = { x, y };
+
+    longPressTimer.current = setTimeout(() => {
+      setTouchDraggingTask(task);
+      setGhostPos({ x, y });
+      // Vibrate if available
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, LONG_PRESS_MS);
+  }
+
+  function handleTaskTouchMove(e, task) {
+    const y = getY(e);
+    const x = e.touches[0].clientX;
+
+    // If we haven't activated drag yet, check if finger moved too far and cancel
+    if (!touchDraggingTask) {
+      if (touchStartPos.current) {
+        const dx = Math.abs(x - touchStartPos.current.x);
+        const dy = Math.abs(y - touchStartPos.current.y);
+        if (dx > 10 || dy > 10) {
+          clearTimeout(longPressTimer.current);
+        }
+      }
+      return;
+    }
+
+    e.preventDefault();
+    setGhostPos({ x, y });
+    const hour = getHourFromY(y);
+    setTouchDragHour(hour);
+  }
+
+  function handleTaskTouchEnd(e) {
+    clearTimeout(longPressTimer.current);
+
+    if (touchDraggingTask && touchDragHour !== null) {
+      dropTaskAtHour(touchDraggingTask, touchDragHour);
+    }
+
+    setTouchDraggingTask(null);
+    setTouchDragHour(null);
+    setGhostPos(null);
+    touchStartPos.current = null;
+  }
+
+  // === HTML5 DRAG (desktop): tasks onto schedule ===
   function handleDragStart(e, task) {
     setDraggingTask(task);
     e.dataTransfer.effectAllowed = 'copy';
@@ -181,18 +270,7 @@ function DailyView({ overrideDate }) {
     e.preventDefault();
     setDropHour(null);
     if (draggingTask) {
-      const colorIdx = blocks.length % BLOCK_COLORS.length;
-      const newBlock = {
-        id: Date.now(),
-        text: draggingTask.text,
-        startHour: hour,
-        endHour: Math.min(hour + 1, 24),
-        color: draggingTask.color && draggingTask.color !== '#1a1a1a'
-          ? draggingTask.color
-          : BLOCK_COLORS[colorIdx],
-        type: 'planned',
-      };
-      updateBlocks([...blocks, newBlock]);
+      dropTaskAtHour(draggingTask, hour);
       setDraggingTask(null);
     }
   }
@@ -202,14 +280,16 @@ function DailyView({ overrideDate }) {
     setDropHour(null);
   }
 
-  // Block resize by dragging bottom edge
-  const handleResizeStart = useCallback((e, block) => {
+  // === BLOCK DRAG: resize bottom edge (mouse + touch) ===
+  const handleResizeBottom = useCallback((e, block) => {
     e.stopPropagation();
     e.preventDefault();
+    const startY = getY(e);
     const origEnd = block.endHour;
 
     function onMove(ev) {
-      const dy = ev.clientY - e.clientY;
+      ev.preventDefault();
+      const dy = getY(ev) - startY;
       const hourDelta = Math.round(dy / ROW_HEIGHT);
       const newEnd = Math.max(block.startHour + 1, Math.min(24, origEnd + hourDelta));
       setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, endHour: newEnd } : b));
@@ -218,17 +298,86 @@ function DailyView({ overrideDate }) {
     function onUp() {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      setBlocks(prev => {
-        saveBlocks(date, prev);
-        return prev;
-      });
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onUp);
+      setBlocks(prev => { saveBlocks(date, prev); return prev; });
     }
 
-    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mousemove', onMove, { passive: false });
     document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+  }, [date]);
+
+  // === BLOCK DRAG: resize top edge (mouse + touch) ===
+  const handleResizeTop = useCallback((e, block) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startY = getY(e);
+    const origStart = block.startHour;
+
+    function onMove(ev) {
+      ev.preventDefault();
+      const dy = getY(ev) - startY;
+      const hourDelta = Math.round(dy / ROW_HEIGHT);
+      const newStart = Math.max(0, Math.min(block.endHour - 1, origStart + hourDelta));
+      setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, startHour: newStart } : b));
+    }
+
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onUp);
+      setBlocks(prev => { saveBlocks(date, prev); return prev; });
+    }
+
+    document.addEventListener('mousemove', onMove, { passive: false });
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+  }, [date]);
+
+  // === BLOCK DRAG: move entire block (mouse + touch) ===
+  const handleBlockMove = useCallback((e, block) => {
+    // Don't trigger move on click — only on actual drag
+    e.stopPropagation();
+    e.preventDefault();
+    const startY = getY(e);
+    const origStart = block.startHour;
+    const duration = block.endHour - block.startHour;
+    let moved = false;
+
+    function onMove(ev) {
+      ev.preventDefault();
+      moved = true;
+      const dy = getY(ev) - startY;
+      const hourDelta = Math.round(dy / ROW_HEIGHT);
+      let newStart = origStart + hourDelta;
+      newStart = Math.max(0, Math.min(24 - duration, newStart));
+      setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, startHour: newStart, endHour: newStart + duration } : b));
+    }
+
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onUp);
+      setBlocks(prev => { saveBlocks(date, prev); return prev; });
+      // If we didn't drag, treat as click -> open edit modal
+      if (!moved) {
+        setEditingBlock(block);
+      }
+    }
+
+    document.addEventListener('mousemove', onMove, { passive: false });
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
   }, [date]);
 
   const doneCount = allTasks.filter(t => t.done).length;
+  const activeDropHour = touchDragHour !== null ? touchDragHour : dropHour;
 
   return (
     <div>
@@ -243,7 +392,7 @@ function DailyView({ overrideDate }) {
         <div className="daily-schedule-panel">
           <p className="section-header" style={{ marginBottom: 8 }}>Schedule</p>
 
-          <div className="schedule-grid">
+          <div className="schedule-grid" ref={scheduleRef}>
             {/* Time blocks overlay */}
             {blocks.map(block => {
               const top = block.startHour * ROW_HEIGHT;
@@ -257,18 +406,36 @@ function DailyView({ overrideDate }) {
                     height,
                     background: block.color || BLOCK_COLORS[0],
                   }}
-                  onClick={e => { e.stopPropagation(); setEditingBlock(block); }}
                 >
-                  <div className="time-block-text">{block.text}</div>
-                  {height >= 40 && (
-                    <div className="time-block-range">
-                      {formatHour(block.startHour)} – {formatHour(block.endHour)}
-                      {' '}({block.endHour - block.startHour}h)
-                    </div>
-                  )}
+                  {/* Top resize handle */}
                   <div
-                    className="time-block-resize"
-                    onMouseDown={e => handleResizeStart(e, block)}
+                    className="time-block-resize top"
+                    onMouseDown={e => handleResizeTop(e, block)}
+                    onTouchStart={e => handleResizeTop(e, block)}
+                  >
+                    <div className="resize-dots">···</div>
+                  </div>
+
+                  {/* Middle: draggable to move, click to edit */}
+                  <div
+                    className="time-block-body"
+                    onMouseDown={e => handleBlockMove(e, block)}
+                    onTouchStart={e => handleBlockMove(e, block)}
+                  >
+                    <div className="time-block-text">{block.text}</div>
+                    {height >= 40 && (
+                      <div className="time-block-range">
+                        {formatHour(block.startHour)} – {formatHour(block.endHour)}
+                        {' '}({block.endHour - block.startHour}h)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bottom resize handle */}
+                  <div
+                    className="time-block-resize bottom"
+                    onMouseDown={e => handleResizeBottom(e, block)}
+                    onTouchStart={e => handleResizeBottom(e, block)}
                   >
                     <div className="resize-dots">···</div>
                   </div>
@@ -301,7 +468,7 @@ function DailyView({ overrideDate }) {
             {/* Hour rows */}
             {HOURS.map(h => {
               const isCurrent = h === currentHour;
-              const isDropTarget = dropHour === h;
+              const isDropTarget = activeDropHour === h;
               const hasBlock = blocks.some(b => h >= b.startHour && h < b.endHour);
 
               return (
@@ -380,7 +547,7 @@ function DailyView({ overrideDate }) {
               </div>
             )}
 
-            <div className="daily-tasks-drag-hint">Drag onto the schedule</div>
+            <div className="daily-tasks-drag-hint">Hold &amp; drag onto schedule</div>
 
             {allTasks.length > 0 && (
               <div className="daily-tasks-list">
@@ -390,11 +557,14 @@ function DailyView({ overrideDate }) {
                 {allTasks.map(task => (
                   <div
                     key={task.id}
-                    className={`daily-task-item ${task.done ? 'done' : ''}`}
+                    className={`daily-task-item ${task.done ? 'done' : ''} ${touchDraggingTask?.id === task.id ? 'dragging' : ''}`}
                     style={{ background: task.color || '#1a1a1a' }}
                     draggable
                     onDragStart={e => handleDragStart(e, task)}
                     onDragEnd={handleDragEnd}
+                    onTouchStart={e => handleTaskTouchStart(e, task)}
+                    onTouchMove={e => handleTaskTouchMove(e, task)}
+                    onTouchEnd={handleTaskTouchEnd}
                   >
                     <div className="daily-task-grip">&#x2802;&#x2802;</div>
                     <button
@@ -421,6 +591,13 @@ function DailyView({ overrideDate }) {
           </div>
         </div>
       </div>
+
+      {/* Touch drag ghost */}
+      {touchDraggingTask && ghostPos && (
+        <div className="touch-drag-ghost" style={{ top: ghostPos.y - 20, left: ghostPos.x - 60 }}>
+          {touchDraggingTask.text}
+        </div>
+      )}
 
       {/* Block edit modal */}
       {editingBlock && (

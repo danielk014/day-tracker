@@ -471,20 +471,33 @@ body {
   left: 52px;
   right: 8px;
   border-radius: 6px;
-  padding: 6px 10px;
   z-index: 5;
-  cursor: pointer;
   overflow: hidden;
   opacity: 0.92;
   transition: opacity 0.1s;
   display: flex;
   flex-direction: column;
-  justify-content: center;
 }
 
 .time-block:hover {
   opacity: 1;
   box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+}
+
+.time-block-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 2px 10px;
+  cursor: grab;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.time-block-body:active {
+  cursor: grabbing;
 }
 
 .time-block-text {
@@ -509,20 +522,28 @@ body {
 }
 
 .time-block-resize {
-  position: absolute;
-  bottom: 0;
   left: 0;
   right: 0;
-  height: 12px;
+  height: 14px;
   cursor: ns-resize;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  touch-action: none;
+}
+
+.time-block-resize.top {
+  border-radius: 6px 6px 0 0;
+}
+
+.time-block-resize.bottom {
   border-radius: 0 0 6px 6px;
 }
 
-.time-block-resize:hover {
-  background: rgba(255,255,255,0.1);
+.time-block-resize:hover,
+.time-block-resize:active {
+  background: rgba(255,255,255,0.15);
 }
 
 .resize-dots {
@@ -530,6 +551,30 @@ body {
   color: rgba(255,255,255,0.5);
   letter-spacing: 1px;
   line-height: 1;
+}
+
+/* Touch drag ghost */
+.touch-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  background: #4a6cf7;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.9;
+}
+
+/* Task dragging state */
+.daily-task-item.dragging {
+  opacity: 0.4;
 }
 
 /* Inline block add */
