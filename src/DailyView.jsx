@@ -129,7 +129,21 @@ function DailyView({ overrideDate }) {
     }
   }
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const confirmTimerRef = useRef(null);
+
   function removeTask(task) {
+    const taskKey = task.recurringId || task.id;
+    if (confirmDeleteId !== taskKey) {
+      // First tap — ask to confirm
+      setConfirmDeleteId(taskKey);
+      clearTimeout(confirmTimerRef.current);
+      confirmTimerRef.current = setTimeout(() => setConfirmDeleteId(null), 3000);
+      return;
+    }
+    // Second tap — actually delete
+    clearTimeout(confirmTimerRef.current);
+    setConfirmDeleteId(null);
     if (task.isRecurring) {
       const updated = recurringTasks.filter(t => t.id !== (task.recurringId || task.id));
       setRecurringTasks(updated);
@@ -579,7 +593,12 @@ function DailyView({ overrideDate }) {
                       {task.text}
                     </span>
                     {task.isRecurring && <span className="recurring-badge">&#x21BB;</span>}
-                    <button className="daily-task-delete" onClick={() => removeTask(task)}>&times;</button>
+                    <button
+                      className={`daily-task-delete ${confirmDeleteId === (task.recurringId || task.id) ? 'confirm' : ''}`}
+                      onClick={() => removeTask(task)}
+                    >
+                      {confirmDeleteId === (task.recurringId || task.id) ? 'Delete?' : '\u00d7'}
+                    </button>
                   </div>
                 ))}
               </div>
