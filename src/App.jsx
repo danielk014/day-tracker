@@ -7,9 +7,10 @@ import CalendarView from './CalendarView';
 import GoalsView from './GoalsView';
 import CoachView from './CoachView';
 import ProjectsView from './ProjectsView';
+import NotesView from './NotesView';
 import './App.css';
 
-const TABS = ['Today', 'Calendar', 'Goals', 'Projects', 'Coach'];
+const TABS = ['Today', 'Calendar', 'Goals', 'Projects', 'Notes', 'Coach'];
 
 function App() {
   const [session, setSession] = useState(undefined);
@@ -86,6 +87,7 @@ function App() {
         {tab === 'Calendar' && <CalendarView onDaySelect={handleDaySelect} />}
         {tab === 'Goals' && <GoalsView />}
         {tab === 'Projects' && <ProjectsView />}
+        {tab === 'Notes' && <NotesView />}
         {tab === 'Coach' && <CoachView />}
       </main>
     </div>

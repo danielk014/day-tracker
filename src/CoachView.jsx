@@ -28,7 +28,7 @@ function CoachView() {
       const dailyTasks = loadAllDailyTasks();
       const scheduleBlocks = loadAllBlocks();
 
-      const res = await fetch('http://localhost:3001/api/coach', {
+      const res = await fetch('/api/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMsg, logs, goals, longTermGoals, dailyTasks, scheduleBlocks })

@@ -8,6 +8,7 @@ const BOARD_KEY = 'daily-tracker-board';
 const DAILY_TASKS_KEY = 'daily-tracker-daily-tasks';
 const RECURRING_TASKS_KEY = 'daily-tracker-recurring-tasks';
 const BLOCKS_KEY = 'daily-tracker-blocks';
+const NOTES_KEY = 'daily-tracker-notes';
 
 // Maps localStorage keys to Supabase data_type identifiers
 const KEY_TO_TYPE = {
@@ -19,6 +20,7 @@ const KEY_TO_TYPE = {
   [DAILY_TASKS_KEY]: 'daily_tasks',
   [RECURRING_TASKS_KEY]: 'recurring_tasks',
   [BLOCKS_KEY]: 'blocks',
+  [NOTES_KEY]: 'notes',
 };
 
 let _userId = null;
@@ -186,6 +188,19 @@ export function saveBlocks(date, blocks) {
     localStorage.setItem(BLOCKS_KEY, JSON.stringify(obj));
   }
   syncToSupabase(BLOCKS_KEY);
+}
+
+export function loadNotes() {
+  try {
+    return JSON.parse(localStorage.getItem(NOTES_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveNotes(notes) {
+  localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+  syncToSupabase(NOTES_KEY);
 }
 
 export function loadAllBlocks() {
